@@ -3,16 +3,18 @@ import pandas as pd
 from collections import Counter
 from datetime import datetime
 import pickle
+import math
 
 class Document:
-    def __init__(self, titre, auteur=None, date=None, texte=None):
+    def __init__(self, titre, auteur=None, date=None, texte=None, source=None):
         self.titre = titre
         self.auteur = auteur
         self.date = date
         self.texte = texte
+        self.source = source
 
     def __repr__(self):
-        return f"Document(titre={self.titre}, auteur={self.auteur}, date={self.date}, texte={self.texte[:30]}...)"
+        return f"Document(titre={self.titre}, auteur={self.auteur}, date={self.date}, texte={self.texte[:30]}..., source={self.source})"
 
 class Author:
     def __init__(self, name):
@@ -28,7 +30,8 @@ class DocumentFactory:
         auteur = row['speaker']
         date = datetime.strptime(row['date'], '%B %d, %Y').strftime('%Y/%m/%d')
         texte = row['text']
-        return Document(titre, auteur, date, texte)
+        source = row.get('source', None)
+        return Document(titre, auteur, date, texte, source)
 
 class Corpus:
     def __init__(self, nom):
@@ -122,6 +125,44 @@ class Corpus:
                 date_counts[date] = 0
             date_counts[date] += 1
         return date_counts
+
+    def tf_idf(self, query):
+        tf = Counter()
+        df = Counter()
+        for doc in self.id2doc.values():
+            texte_nettoye = self.nettoyer_texte(doc.texte)
+            mots = texte_nettoye.split()
+            tf.update(mots)
+            df.update(set(mots))
+        N = len(self.id2doc)
+        tf_idf_scores = {word: (tf[word] / len(tf)) * math.log(N / (df[word] + 1)) for word in tf}
+        return tf_idf_scores
+
+    def okapi_bm25(self, query, k1=1.5, b=0.75):
+        tf = Counter()
+        df = Counter()
+        doc_lengths = []
+        for doc in self.id2doc.values():
+            texte_nettoye = self.nettoyer_texte(doc.texte)
+            mots = texte_nettoye.split()
+            tf.update(mots)
+            df.update(set(mots))
+            doc_lengths.append(len(mots))
+        N = len(self.id2doc)
+        avg_doc_length = sum(doc_lengths) / N
+        bm25_scores = {}
+        for word in tf:
+            idf = math.log((N - df[word] + 0.5) / (df[word] + 0.5))
+            for doc in self.id2doc.values():
+                texte_nettoye = self.nettoyer_texte(doc.texte)
+                mots = texte_nettoye.split()
+                tf_word = mots.count(word)
+                doc_length = len(mots)
+                score = idf * ((tf_word * (k1 + 1)) / (tf_word + k1 * (1 - b + b * (doc_length / avg_doc_length))))
+                if word not in bm25_scores:
+                    bm25_scores[word] = 0
+                bm25_scores[word] += score
+        return bm25_scores
 
 class SearchEngine:
     def __init__(self, corpus):
